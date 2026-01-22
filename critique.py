@@ -1,5 +1,10 @@
 # critique.py
 
+from openai import OpenAI
+from config import OPENAI_API_KEY
+
+client = OpenAI(api_key=OPENAI_API_KEY)
+
 import argparse
 from prompts import (
     SYSTEM_PROMPT,
@@ -9,7 +14,6 @@ from prompts import (
     GRAMMAR_PROMPT,
     META_PROMPT,
 )
-from config import USE_MOCK_AI
 
 
 def load_text(path: str) -> str:
@@ -31,25 +35,67 @@ def get_user_context():
     }
 
 
-def mock_ai_response(label: str) -> str:
-    return f"[MOCK AI OUTPUT for {label}]"
+
+
 
 
 def run_ai(prompt: str, text: str, context: dict, label: str) -> str:
-    if USE_MOCK_AI:
-        return mock_ai_response(label)
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": f"""
+TEXT:
+{text}
 
-    # Later: replace with real AI call
-    raise NotImplementedError("Real AI integration not implemented yet.")
+CONTEXT (may be incomplete):
+- Intended thesis: {context.get("thesis")}
+- Target audience: {context.get("audience")}
+- Draft stage: {context.get("stage")}
+
+TASK:
+{prompt}
+"""
+        }
+    ]
+
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=messages,
+        temperature=0.2,
+    )
+
+    return response.choices[0].message.content.strip()
+
 
 
 def main():
     parser = argparse.ArgumentParser(description="AI Writing Critique Tool")
     parser.add_argument("file", help="Path to text file to critique")
+
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show planned critique steps without making API calls",
+    )
+
+    parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Require confirmation before making API calls",
+    )
+
     args = parser.parse_args()
+
+
 
     text = load_text(args.file)
     context = get_user_context()
+
+    assumed = {k: v is None for k, v in context.items()}
+
+    if any(assumed.values()):
+        print("\nNote: Some context was not provided and will be inferred by the AI.")
 
     print("\n--- CRITIQUE START ---\n")
 
@@ -61,10 +107,27 @@ def main():
         ("Meta Feedback", META_PROMPT),
     ]
 
+    if args.confirm:
+        print("\nThis operation will make multiple OpenAI API calls.")
+        print("Estimated cost: low (short text, low temperature).\n")
+
+        confirm = input("Continue? [y/N]: ").strip().lower()
+        if confirm != "y":
+            print("Aborted.")
+            return
+
     for label, prompt in sections:
         print(f"\n## {label}\n")
+
+        if args.dry_run:
+            print("[DRY RUN] No API call made.")
+            print("Prompt type:", label)
+            continue
+
         output = run_ai(prompt, text, context, label)
         print(output)
+
+
 
     print("\n--- CRITIQUE END ---\n")
 
